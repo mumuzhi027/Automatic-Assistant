@@ -27,8 +27,10 @@ window.addEventListener("storage", (event) => {
 
 export async function api(path, options = {}) {
   const current = session();
+  const method = String(options.method || "GET").toUpperCase();
   const response = await fetch(`${base}/api${path}`, {
     ...options,
+    cache: options.cache || (method === "GET" ? "no-store" : "default"),
     headers: {
       "Content-Type": "application/json",
       ...(current?.token ? { Authorization: `Bearer ${current.token}` } : {}),

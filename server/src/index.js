@@ -11,6 +11,7 @@ import { auth, admin, owns, sign } from "./auth.js";
 import { nextRun } from "./schedule.js";
 import { collect, manualRunQuota, runTask, startScheduler, testModel } from "./report-service.js";
 import { createReportDocx } from "./report-export.js";
+import { normalizeReportSections } from "./report-normalize.js";
 import { publicEmailConfig, sendReportEmail, testEmailConnection, validEmail } from "./email-service.js";
 
 const app = express();
@@ -77,6 +78,14 @@ const reportEmailLimiter = rateLimit({
 
 const publicUser = ({ passwordHash, ...user }) => user;
 const getTask = (id) => store.data.tasks.find((x) => x.id === id);
+const normalizeSourceUrl = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+};
+const normalizeSources = (values) => [...new Set((Array.isArray(values) ? values : [])
+  .map(normalizeSourceUrl)
+  .filter(Boolean))];
 function taskValidationError(input, partial = false) {
   if (!partial && (!String(input.name || "").trim() || !String(input.industry || "").trim())) return "请填写任务名称和行业主题";
   if (input.sources !== undefined) {
@@ -84,7 +93,7 @@ function taskValidationError(input, partial = false) {
     if (input.sources.length > 20) return "补充信息源最多填写 20 个";
     if (input.sources.some((url) => {
       try {
-        const parsed = new URL(String(url));
+        const parsed = new URL(normalizeSourceUrl(url));
         const host = parsed.hostname.toLowerCase();
         return !["http:", "https:"].includes(parsed.protocol)
           || ["localhost", "0.0.0.0", "::1", "[::1]"].includes(host)
@@ -187,24 +196,33 @@ app.post("/api/tasks/preview-sources", auth, sourcePreviewLimiter, async (req, r
   const error = taskValidationError(req.body);
   if (error) return res.status(400).json({ message: error });
   try {
-    const items = await collect({
+    const collection = await collect({
       name: String(req.body.name).slice(0, 100),
       industry: String(req.body.industry).slice(0, 100),
+      description: String(req.body.description || "").slice(0, 2000),
       keywords: Array.isArray(req.body.keywords) ? req.body.keywords.slice(0, 30) : [],
       excludedKeywords: Array.isArray(req.body.excludedKeywords) ? req.body.excludedKeywords.slice(0, 30) : [],
-      sources: Array.isArray(req.body.sources) ? req.body.sources.slice(0, 10) : [],
+      focusQuestions: String(req.body.focusQuestions || "").slice(0, 2000),
+      sources: normalizeSources(req.body.sources).slice(0, 20),
       lookbackHours: Math.min(168, Math.max(1, Number(req.body.lookbackHours || 48)))
-    });
+    }, { includeDiagnostics: true });
+    const { items, unverifiedItems, diagnostics } = collection;
+    const rangeDays = Math.round(diagnostics.lookbackHours / 24);
+    const diagnosticMessage = `共尝试 ${diagnostics.sourceCount} 个检索通道，获得 ${diagnostics.rawCount} 条原始信息；去重后 ${diagnostics.uniqueCount} 条，主题匹配 ${diagnostics.relevantCount} 条，其中 ${diagnostics.outsideLookbackCount} 条超出最近 ${rangeDays} 天、${diagnostics.unknownDateCount} 条无法确认日期，最终保留 ${items.length} 条`
+      + (diagnostics.failedSourceCount ? `，${diagnostics.failedSourceCount} 个来源暂时不可用` : "");
     res.json({
       count: items.length,
-      items: items.slice(0, 8).map((item) => ({
+      unverifiedCount: diagnostics.unknownDateCount,
+      items: [...items.slice(0, 8), ...unverifiedItems].map((item) => ({
         title: item.title,
         link: item.url,
         publishedAt: item.publishedAt,
         sourceType: item.sourceType,
+        dateUnverified: !item.publishedAt,
         summary: String(item.summary || "").slice(0, 260)
       })),
-      message: items.length ? `找到 ${items.length} 条符合条件的资料` : "没有找到符合条件的资料，请调整关键词、时间范围或信息源"
+      diagnostics,
+      message: diagnosticMessage
     });
   } catch (error) {
     res.status(502).json({ message: `采集测试失败：${error.message}` });
@@ -222,7 +240,7 @@ app.post("/api/tasks", auth, (req, res) => {
     description: String(req.body.description || "").slice(0, 1000),
     keywords: Array.isArray(req.body.keywords) ? req.body.keywords.slice(0, 30) : [],
     excludedKeywords: Array.isArray(req.body.excludedKeywords) ? req.body.excludedKeywords.slice(0, 30) : [],
-    sources: Array.isArray(req.body.sources) ? req.body.sources.slice(0, 20) : [],
+    sources: normalizeSources(req.body.sources).slice(0, 20),
     focusQuestions: String(req.body.focusQuestions || "").slice(0, 2000),
     lookbackHours: Math.min(168, Math.max(1, Number(req.body.lookbackHours || 48))),
     emailReport: Boolean(req.body.emailReport),
@@ -238,7 +256,10 @@ app.put("/api/tasks/:id", auth, (req, res) => {
   const validationError = taskValidationError(req.body, true);
   if (validationError) return res.status(400).json({ message: validationError });
   const allowed = ["name", "industry", "description", "keywords", "excludedKeywords", "sources", "focusQuestions", "lookbackHours", "emailReport", "schedule", "status"];
-  for (const key of allowed) if (req.body[key] !== undefined) task[key] = req.body[key];
+  for (const key of allowed) {
+    if (req.body[key] === undefined) continue;
+    task[key] = key === "sources" ? normalizeSources(req.body.sources).slice(0, 20) : req.body[key];
+  }
   task.updatedAt = new Date().toISOString();
   if (req.body.schedule || req.body.status === "ACTIVE") task.nextRunAt = nextRun(task.schedule);
   store.save(); res.json(task);
@@ -268,7 +289,7 @@ app.get("/api/reports/:id", auth, (req, res) => {
   const report = store.data.reports.find((x) => x.id === req.params.id);
   if (!report || !owns(req, report.userId)) return res.status(404).json({ message: "报告不存在" });
   const feedback = store.data.feedback.find((x) => x.reportId === report.id && x.userId === req.session.sub) || null;
-  res.json({ ...report, feedback });
+  res.json({ ...report, sections: normalizeReportSections(report.sections), feedback });
 });
 app.post("/api/reports/:id/feedback", auth, (req, res) => {
   const report = store.data.reports.find((x) => x.id === req.params.id);

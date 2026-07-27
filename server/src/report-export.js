@@ -7,6 +7,7 @@ import {
   Paragraph,
   TextRun
 } from "docx";
+import { normalizeReportSections } from "./report-normalize.js";
 
 const font = "Microsoft YaHei";
 const line = { color: "D9E1DC", space: 1, style: BorderStyle.SINGLE, size: 4 };
@@ -38,7 +39,7 @@ function list(items = []) {
 }
 
 export async function createReportDocx(report) {
-  const sections = report.sections || {};
+  const sections = normalizeReportSections(report.sections);
   const children = [
     new Paragraph({
       children: [new TextRun({ text: report.title, bold: true, font, size: 38, color: "214E3F" })],

@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { api } from "../api";
 import { notify } from "../main";
 import { ExternalLink, LoaderCircle, Search } from "@lucide/vue";
-const tasks = ref([]), show = ref(false), editing = ref(null), running = ref(""), quota = ref(null);
+const tasks = ref([]), show = ref(false), editing = ref(null), running = ref(""), quota = ref(null), saving = ref(false);
 const previewing = ref(false), preview = ref(null);
 const recommendedSources = [
   { name:"百度新闻", url:"https://news.baidu.com/", description:"中文综合新闻" },
@@ -42,11 +42,12 @@ function open(task=null) {
   show.value = true;
 }
 const split = (v) => v.split(/[，,\n]/).map(x=>x.trim()).filter(Boolean);
+const normalizeSourceUrl = (value) => /^https?:\/\//i.test(value) ? value : `https://${value}`;
 const taskBody = () => {
   const schedule = form.scheduleMode === "weekly"
     ? { mode:"weekly", weekdays:form.weekdays.map(Number), time:form.time, timezone:"Asia/Shanghai" }
     : { mode:"interval_days", interval:Number(form.interval), time:form.time, timezone:"Asia/Shanghai" };
-  const customSources = form.sources.split("\n").map(x=>x.trim()).filter(Boolean);
+  const customSources = form.sources.split("\n").map(x=>x.trim()).filter(Boolean).map(normalizeSourceUrl);
   return {...form,keywords:split(form.keywords),excludedKeywords:split(form.excludedKeywords),sources:[...new Set([...form.recommendedSources,...customSources])],schedule};
 };
 async function previewSources() {
@@ -66,15 +67,27 @@ async function previewSources() {
 }
 async function save() {
   const body=taskBody();
+  if(saving.value)return;
+  saving.value=true;
   try {
-    await api(editing.value ? `/tasks/${editing.value.id}` : "/tasks",{method:editing.value?"PUT":"POST",body});
-    show.value=false; await load(); notify(editing.value ? "任务已更新" : "任务已创建");
+    const isEditing=Boolean(editing.value);
+    const saved=await api(isEditing ? `/tasks/${editing.value.id}` : "/tasks",{method:isEditing?"PUT":"POST",body});
+    if(isEditing)tasks.value=tasks.value.map((task)=>task.id===saved.id?saved:task);
+    else tasks.value=[saved,...tasks.value];
+    show.value=false;
+    notify(isEditing ? "任务已更新" : "任务已创建");
   } catch(error) { notify(error.message, "error"); }
+  finally{saving.value=false}
 }
 async function toggle(task) { await api(`/tasks/${task.id}`,{method:"PUT",body:{status:task.status==="ACTIVE"?"PAUSED":"ACTIVE"}}); load(); }
 async function run(task) { running.value=task.id; try { const r=await api(`/tasks/${task.id}/run`,{method:"POST"}); notify(`报告“${r.title}”已生成`); } catch(e){notify(e.message,"error")} finally{running.value="";await load()} }
 async function remove(task) { if(confirm(`确定删除“${task.name}”？`)){await api(`/tasks/${task.id}`,{method:"DELETE"});load();notify("任务已删除")} }
 const fmt=v=>v?new Date(v).toLocaleString("zh-CN",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
+const sourceTypeLabel=(value)=>({SEARCH:"新闻搜索",SITE_SEARCH:"站内搜索",SITEMAP:"官网更新",RSS:"RSS",WEBPAGE:"网页"})[value]||"网页";
+const sourceDate=(value)=>{
+  const date=new Date(value);
+  return value&&Number.isFinite(date.getTime())?date.toLocaleString("zh-CN"):"日期未知";
+};
 </script>
 <template>
   <div class="page">
@@ -107,8 +120,8 @@ const fmt=v=>v?new Date(v).toLocaleString("zh-CN",{month:"short",day:"numeric",h
               </label>
             </div>
           </section>
-          <label class="custom-source-label">自定义网址（每行一个）<textarea v-model="form.sources" rows="3" placeholder="加入你关注的大厂、行业媒体或官方博客，例如：https://openai.com/news/"></textarea></label>
-          <small class="field-help">支持 RSS、新闻栏目或具体网页地址，每行填写一个。系统会先通过内置新闻搜索源自动检索，再合并你勾选和手动填写的来源。</small>
+          <label class="custom-source-label">自定义网址（每行一个）<textarea v-model="form.sources" rows="3" placeholder="填写你关注的大厂、行业媒体或官方博客，例如：openai.com"></textarea></label>
+          <small class="field-help">只填写官网或域名也可以，系统会按任务主题搜索站内相关页面；填写 RSS、新闻栏目或具体文章地址时则直接读取。每行填写一个网址。</small>
         </div>
         <div class="preview-toolbar">
           <div><b>保存前测试采集</b><span>按当前主题、关键词与信息源获取一小批真实结果，不会生成报告或消耗模型额度。</span></div>
@@ -117,9 +130,9 @@ const fmt=v=>v?new Date(v).toLocaleString("zh-CN",{month:"short",day:"numeric",h
           </button>
         </div>
         <section v-if="preview" class="source-preview">
-          <div class="source-preview-head"><b>{{preview.count ? `找到 ${preview.count} 条近期信息` : "暂未找到近期信息"}}</b><span>{{preview.message}}</span></div>
-          <a v-for="item in preview.items" :key="item.link" :href="item.link" target="_blank" rel="noreferrer" class="preview-item">
-            <div><b>{{item.title}}</b><span>{{item.sourceType}}<template v-if="item.publishedAt"> · {{new Date(item.publishedAt).toLocaleString("zh-CN")}}</template></span><p v-if="item.summary">{{item.summary}}</p></div>
+          <div class="source-preview-head"><b>{{preview.count ? `找到 ${preview.count} 条近期信息` : "暂未找到日期可核验的近期信息"}}<small v-if="preview.unverifiedCount" title="这些资料主题相关，但网页未提供可信发布时间，因此不会计入近期结果或本期报告">另有 {{preview.unverifiedCount}} 条日期待核验（不计入报告）</small></b><span>{{preview.message}}</span></div>
+          <a v-for="item in preview.items" :key="item.link" :href="item.link" target="_blank" rel="noreferrer" class="preview-item" :class="{unverified:item.dateUnverified}">
+            <div><b>{{item.title}}</b><span>{{sourceTypeLabel(item.sourceType)}} · {{item.dateUnverified?"日期待核验":sourceDate(item.publishedAt)}}</span><p v-if="item.summary">{{item.summary}}</p></div>
             <ExternalLink :size="15"/>
           </a>
         </section>
@@ -127,7 +140,7 @@ const fmt=v=>v?new Date(v).toLocaleString("zh-CN",{month:"short",day:"numeric",h
         <label v-if="form.scheduleMode==='interval_days'">每隔几天执行<input v-model.number="form.interval" type="number" min="1" max="30" /></label>
         <div v-else class="weekday-field"><span>每周执行日</span><div class="weekday-picker"><label v-for="day in [{v:1,n:'一'},{v:2,n:'二'},{v:3,n:'三'},{v:4,n:'四'},{v:5,n:'五'},{v:6,n:'六'},{v:0,n:'日'}]" :key="day.v"><input v-model="form.weekdays" type="checkbox" :value="day.v"/><span>周{{day.n}}</span></label></div></div>
         <label class="check-row mail-option"><input v-model="form.emailReport" type="checkbox"/><span><b>生成后自动发送 Word 报告</b><small>发送到管理员为当前账号设置的报告接收邮箱；发送失败不会影响报告保存。</small></span></label>
-        <div class="modal-actions"><button type="button" class="btn ghost" @click="show=false">取消</button><button class="btn primary">保存任务</button></div>
+        <div class="modal-actions"><button type="button" class="btn ghost" @click="show=false">取消</button><button class="btn primary" :disabled="saving">{{saving?"保存中…":"保存任务"}}</button></div>
       </form>
     </div>
   </div>
