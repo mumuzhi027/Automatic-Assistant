@@ -1,9 +1,32 @@
 <script setup>
 import { onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
+import { Eye } from "@lucide/vue";
 import { api, session } from "../api";
 const data = ref(null);
 const isAdmin = session()?.user?.role === "ADMIN";
+const noteOptions = [
+  "你持续关注的每个信号，都在为下一次判断积累优势。",
+  "真正有价值的洞察，往往来自长期而安静的观察。",
+  "保持好奇，今天的微小变化可能是明天的重要趋势。",
+  "每一次认真反馈，都在让系统更懂你的判断标准。",
+  "不必追逐所有热点，只需看清与你真正相关的变化。",
+  "清晰的方向加上持续的行动，会让机会更早浮现。",
+  "把复杂交给系统，把注意力留给真正重要的决定。",
+  "你今天建立的观察习惯，会成为未来判断力的一部分。",
+  "重要的不是信息更多，而是更早看见值得行动的信号。",
+  "稳定地向前一点，也是在接近更好的答案。"
+];
+function pickNote() {
+  const storageKey = "aa_dashboard_note";
+  const stored = sessionStorage.getItem(storageKey);
+  const previous = stored === null ? -1 : Number(stored);
+  const choices = noteOptions.map((_, index) => index).filter((index) => index !== previous);
+  const index = choices[Math.floor(Math.random() * choices.length)];
+  sessionStorage.setItem(storageKey, String(index));
+  return noteOptions[index];
+}
+const dashboardNote = isAdmin ? "" : pickNote();
 onMounted(async () => { data.value = await api("/dashboard"); });
 const fmt = (v) => v ? new Date(v).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "尚未执行";
 </script>
@@ -40,7 +63,7 @@ const fmt = (v) => v ? new Date(v).toLocaleString("zh-CN", { month: "short", day
         <section class="card">
           <div class="section-title"><div><span class="eyebrow ink">YOUR WATCHLIST</span><h2>正在观察</h2></div><RouterLink to="/tasks">管理任务 →</RouterLink></div>
           <div class="task-row" v-for="task in data.tasks" :key="task.id">
-            <div class="task-icon">⌁</div><div class="grow"><b>{{ task.name }}</b><p>{{ task.industry }} · 最近 {{ task.lookbackHours }} 小时</p></div>
+            <div class="task-icon"><Eye :size="19" /></div><div class="grow"><b>{{ task.name }}</b><p>{{ task.industry }} · 最近 {{ task.lookbackHours }} 小时</p></div>
             <div class="next"><small>下次执行</small><b>{{ fmt(task.nextRunAt) }}</b></div>
           </div>
         </section>
@@ -52,7 +75,7 @@ const fmt = (v) => v ? new Date(v).toLocaleString("zh-CN", { month: "short", day
           </RouterLink>
         </section>
       </div>
-      <div class="insight-banner"><div><span class="eyebrow">AUTOMATIC NOTE</span><h2>你的情报系统正在逐渐形成自己的判断坐标。</h2></div><p>持续反馈“有价值”与“不感兴趣”，系统会把稳定偏好整理为候选记忆，并在你确认后用于后续报告。</p></div>
+      <div class="insight-banner"><div><span class="eyebrow">AUTOMATIC NOTE</span><h2>{{ dashboardNote }}</h2></div><p>持续反馈“有价值”与“不感兴趣”，系统会把稳定偏好整理为候选记忆，并在你确认后用于后续报告。</p></div>
     </template>
   </div>
 </template>

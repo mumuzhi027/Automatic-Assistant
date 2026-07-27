@@ -33,7 +33,7 @@ async function changePassword() {
       <Transition name="panel-slide" mode="out-in">
         <form v-if="tab==='profile'" key="profile" class="card profile-form" @submit.prevent="save">
           <div class="form-title"><div><h2>工作画像</h2><p>这些信息会作为报告生成时的个人背景。</p></div></div>
-          <div class="form-grid"><label>我的角色<input v-model="form.role" placeholder="例如：产品研究、技术开发" /></label><label>所在组织<input v-model="form.organization" placeholder="例如：核心研究组" /></label></div>
+          <div class="form-grid"><label>我的角色<input v-model="form.role" placeholder="例如：产品研究、技术开发" /></label><label>所在部门<input v-model="form.organization" placeholder="例如：技术部" /></label></div>
           <label>关于我<textarea v-model="form.bio" rows="4" placeholder="简单介绍你的职责、经验和当前项目"></textarea></label>
           <label>长期关注方向<textarea v-model="form.focus" rows="3" placeholder="例如：AI 视频、数字人、内容自动化"></textarea></label>
           <label>喜欢的报告风格<textarea v-model="form.reportStyle" rows="3" placeholder="例如：结论先行、减少套话、给出可执行建议"></textarea></label>

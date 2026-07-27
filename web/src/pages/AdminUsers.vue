@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { api } from "../api";
 import { notify } from "../main";
 import { UserPlus, KeyRound, PauseCircle, PlayCircle, X, UsersRound, Pencil, Trash2, RotateCcw, Search } from "@lucide/vue";
@@ -10,13 +10,36 @@ const target = ref(null);
 const showArchived = ref(false);
 const search = ref("");
 const form = reactive({ username: "", name: "", email: "", password: "", allowManualRun: true, dailyManualRunLimit: 5, manualRunCooldownMinutes: 10 });
-const load = async () => { users.value = await api("/admin/users"); };
+let refreshTimer;
+let loading = false;
+const load = async () => {
+  if (loading) return;
+  loading = true;
+  try {
+    users.value = await api("/admin/users", { cache: "no-store" });
+  } finally {
+    loading = false;
+  }
+};
+const refreshWhenVisible = () => {
+  if (document.visibilityState === "visible") load().catch(() => {});
+};
 const visibleUsers = computed(() => {
   const keyword = search.value.trim().toLowerCase();
   return users.value.filter((user) => (showArchived.value ? user.deletedAt : !user.deletedAt)
     && (!keyword || [user.name, user.username].some(value => String(value || "").toLowerCase().includes(keyword))));
 });
-onMounted(load);
+onMounted(() => {
+  load();
+  refreshTimer = window.setInterval(refreshWhenVisible, 15000);
+  window.addEventListener("focus", refreshWhenVisible);
+  document.addEventListener("visibilitychange", refreshWhenVisible);
+});
+onBeforeUnmount(() => {
+  window.clearInterval(refreshTimer);
+  window.removeEventListener("focus", refreshWhenVisible);
+  document.removeEventListener("visibilitychange", refreshWhenVisible);
+});
 function openCreate() { Object.assign(form, { username: "", name: "", email: "", password: "", allowManualRun: true, dailyManualRunLimit: 5, manualRunCooldownMinutes: 10 }); modal.value = "create"; }
 function openReset(user) { target.value = user; form.password = ""; modal.value = "reset"; }
 function openEdit(user) { target.value = user; Object.assign(form, { name: user.name, email: user.email || "", allowManualRun: user.allowManualRun, dailyManualRunLimit: user.dailyManualRunLimit, manualRunCooldownMinutes: user.manualRunCooldownMinutes }); modal.value = "edit"; }

@@ -55,7 +55,7 @@ function seed() {
       { id: memberId, username: "member", name: "林知远", passwordHash: bcrypt.hashSync("member123", 10), role: "USER", active: true, allowManualRun: true, dailyManualRunLimit: 5, manualRunCooldownMinutes: 10, createdAt: now() }
     ],
     profiles: [
-      { userId: memberId, role: "产品与技术研究", organization: "核心研究组", bio: "关注 AI 音视频生产、自动化内容生成和个人开发机会。", reportStyle: "简洁、偏产品分析，结论要可执行", focus: "AI 视频、数字人、视频翻译、音频处理" }
+      { userId: memberId, role: "产品与技术研究", organization: "技术部", bio: "关注 AI 音视频生产、自动化内容生成和个人开发机会。", reportStyle: "简洁、偏产品分析，结论要可执行", focus: "AI 视频、数字人、视频翻译、音频处理" }
     ],
     tasks: [
       {
@@ -114,6 +114,7 @@ export class Store {
     fs.mkdirSync(dataDir, { recursive: true });
     if (!fs.existsSync(dataFile)) fs.writeFileSync(dataFile, JSON.stringify(seed(), null, 2));
     this.data = JSON.parse(fs.readFileSync(dataFile, "utf8"));
+    let changed = false;
     if (!this.data.emailConfig) {
       this.data.emailConfig = {
         host: process.env.SMTP_HOST || "",
@@ -126,8 +127,15 @@ export class Store {
         enabled: process.env.SMTP_ENABLED === "true",
         updatedAt: now()
       };
-      this.save();
+      changed = true;
     }
+    for (const profile of this.data.profiles || []) {
+      if (profile.organization === "核心研究组") {
+        profile.organization = "技术部";
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   save() {

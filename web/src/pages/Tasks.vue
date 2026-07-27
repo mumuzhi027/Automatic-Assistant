@@ -5,7 +5,17 @@ import { notify } from "../main";
 import { ExternalLink, LoaderCircle, Search } from "@lucide/vue";
 const tasks = ref([]), show = ref(false), editing = ref(null), running = ref(""), quota = ref(null);
 const previewing = ref(false), preview = ref(null);
-const form = reactive({ name:"", industry:"", description:"", keywords:"", excludedKeywords:"", sources:"", focusQuestions:"", lookbackHours:48, emailReport:false, scheduleMode:"interval_days", interval:2, weekdays:[1], time:"09:00" });
+const recommendedSources = [
+  { name:"百度新闻", url:"https://news.baidu.com/", description:"中文综合新闻" },
+  { name:"36氪", url:"https://36kr.com/feed", description:"科技与商业" },
+  { name:"虎嗅", url:"https://www.huxiu.com/rss/0.xml", description:"商业与创新" },
+  { name:"IT之家", url:"https://www.ithome.com/rss/", description:"科技产品动态" },
+  { name:"少数派", url:"https://sspai.com/feed", description:"数字生活与效率" },
+  { name:"Product Hunt", url:"https://www.producthunt.com/feed", description:"全球新产品" }
+];
+const recommendedSourceUrls = new Set(recommendedSources.map((source) => source.url));
+const emptyForm = () => ({ name:"", industry:"", description:"", keywords:"", excludedKeywords:"", sources:"", recommendedSources:[], focusQuestions:"", lookbackHours:48, emailReport:false, scheduleMode:"interval_days", interval:2, weekdays:[1], time:"09:00" });
+const form = reactive(emptyForm());
 const load = async () => {
   const [taskResult, quotaResult] = await Promise.allSettled([api("/tasks"), api("/me/manual-run-quota")]);
   if (taskResult.status === "fulfilled") tasks.value = taskResult.value;
@@ -16,7 +26,19 @@ onMounted(load);
 function open(task=null) {
   editing.value = task;
   preview.value = null;
-  Object.assign(form, task ? { ...task, emailReport:Boolean(task.emailReport), keywords:task.keywords.join("，"), excludedKeywords:task.excludedKeywords.join("，"), sources:task.sources.join("\n"), scheduleMode:task.schedule.mode || "interval_days", interval:task.schedule.interval || 1, weekdays:task.schedule.weekdays || [1], time:task.schedule.time } : { name:"",industry:"",description:"",keywords:"",excludedKeywords:"",sources:"",focusQuestions:"",lookbackHours:48,emailReport:false,scheduleMode:"interval_days",interval:2,weekdays:[1],time:"09:00" });
+  const savedSources = task?.sources || [];
+  Object.assign(form, task ? {
+    ...task,
+    emailReport:Boolean(task.emailReport),
+    keywords:task.keywords.join("，"),
+    excludedKeywords:task.excludedKeywords.join("，"),
+    sources:savedSources.filter((url) => !recommendedSourceUrls.has(url)).join("\n"),
+    recommendedSources:savedSources.filter((url) => recommendedSourceUrls.has(url)),
+    scheduleMode:task.schedule.mode || "interval_days",
+    interval:task.schedule.interval || 1,
+    weekdays:task.schedule.weekdays || [1],
+    time:task.schedule.time
+  } : emptyForm());
   show.value = true;
 }
 const split = (v) => v.split(/[，,\n]/).map(x=>x.trim()).filter(Boolean);
@@ -24,7 +46,8 @@ const taskBody = () => {
   const schedule = form.scheduleMode === "weekly"
     ? { mode:"weekly", weekdays:form.weekdays.map(Number), time:form.time, timezone:"Asia/Shanghai" }
     : { mode:"interval_days", interval:Number(form.interval), time:form.time, timezone:"Asia/Shanghai" };
-  return {...form,keywords:split(form.keywords),excludedKeywords:split(form.excludedKeywords),sources:form.sources.split("\n").map(x=>x.trim()).filter(Boolean),schedule};
+  const customSources = form.sources.split("\n").map(x=>x.trim()).filter(Boolean);
+  return {...form,keywords:split(form.keywords),excludedKeywords:split(form.excludedKeywords),sources:[...new Set([...form.recommendedSources,...customSources])],schedule};
 };
 async function previewSources() {
   if (!form.name.trim() || !form.industry.trim()) {
@@ -69,11 +92,24 @@ const fmt=v=>v?new Date(v).toLocaleString("zh-CN",{month:"short",day:"numeric",h
     </div>
     <div v-if="show" class="modal-wrap" @mousedown.self="show=false">
       <form class="modal" @submit.prevent="save"><button class="close" type="button" @click="show=false">×</button><span class="eyebrow ink">{{ editing?"EDIT WATCH":"NEW WATCH" }}</span><h2>{{ editing?"编辑任务":"新建情报任务" }}</h2>
-        <div class="form-grid"><label>任务名称<input v-model="form.name" required placeholder="例如：AI 音视频行业前沿" /></label><label>行业主题<input v-model="form.industry" required placeholder="例如：AI 音视频" /></label></div>
+        <div class="form-grid"><label>任务名称 <span class="required-mark">*</span><input v-model="form.name" required placeholder="例如：AI 音视频行业前沿" /></label><label>行业主题 <span class="required-mark">*</span><input v-model="form.industry" required placeholder="例如：AI 音视频" /></label></div>
         <label>任务说明<textarea v-model="form.description" rows="2" placeholder="你希望系统持续观察什么？"></textarea></label>
         <div class="form-grid"><label>关注关键词<input v-model="form.keywords" placeholder="用逗号分隔" /></label><label>排除关键词<input v-model="form.excludedKeywords" placeholder="广告，课程推广" /></label></div>
         <label>重点问题<textarea v-model="form.focusQuestions" rows="2" placeholder="你希望报告重点回答什么？"></textarea></label>
-        <label>补充信息源（选填，每行一个）<textarea v-model="form.sources" rows="3" placeholder="支持 RSS、新闻栏目或具体网页地址"></textarea><small class="field-help">系统会先根据行业主题和关键词自动检索近期新闻；这里适合补充官方博客、媒体栏目和你信任的网站。不要填写百度首页一类的搜索入口。</small></label>
+        <div class="source-field">
+          <div class="source-field-title">补充信息源（选填）</div>
+          <section class="source-recommendations">
+            <div class="source-recommendations-head"><b>推荐来源</b><span>可多选，系统会与自定义网址一起采集</span></div>
+            <div class="source-picker">
+              <label v-for="source in recommendedSources" :key="source.url" :class="{active:form.recommendedSources.includes(source.url)}">
+                <input v-model="form.recommendedSources" type="checkbox" :value="source.url"/>
+                <span><b>{{source.name}}</b><small>{{source.description}}</small></span>
+              </label>
+            </div>
+          </section>
+          <label class="custom-source-label">自定义网址（每行一个）<textarea v-model="form.sources" rows="3" placeholder="加入你关注的大厂、行业媒体或官方博客，例如：https://openai.com/news/"></textarea></label>
+          <small class="field-help">支持 RSS、新闻栏目或具体网页地址，每行填写一个。系统会先通过内置新闻搜索源自动检索，再合并你勾选和手动填写的来源。</small>
+        </div>
         <div class="preview-toolbar">
           <div><b>保存前测试采集</b><span>按当前主题、关键词与信息源获取一小批真实结果，不会生成报告或消耗模型额度。</span></div>
           <button type="button" class="btn ghost" :disabled="previewing" @click="previewSources">
